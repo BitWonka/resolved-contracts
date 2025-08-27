@@ -1,6 +1,6 @@
-# Resolv Contracts
+# Resolved Contracts
 
-A minimal smart contracts repo for the Resolv project, built with Foundry. It contains the core vault/strategy contracts and a simple deployment script.
+A minimal smart contracts repo for the Resolved project, built with Foundry. It contains the core vault contracts and a simple deployment script.
 
 ## Contracts
 - `WstResolv.sol` – Main vault wrapper for stResolv.
@@ -45,7 +45,7 @@ anvil
 ## Deploy
 Example deployment of the WstResolv script:
 ```sh
-forge script script/WstResolv.s.sol:WstResolvScript \
+forge script script/WstResolv.s.sol:DeployWstResolv \
   --rpc-url $RPC_URL \
   --private-key $PRIVATE_KEY \
   --broadcast
