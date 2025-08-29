@@ -28,15 +28,15 @@ interface IStResolv {
 contract WstResolv is ERC4626, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
-    IStResolv public immutable stResolv; // stRESOLV proxy (also staking contract)
-    IERC20 public immutable resolv; // reward token received on claim()
+    /// @notice stRESOLV (also the staking contract).
+    IStResolv public immutable stResolv;
 
-    bool public harvestOnDeposit = false;
-    uint256 public minHarvestInterval = 1 hours;
+    /// @notice RESOLV reward token received when claiming.
+    IERC20 public immutable resolv;
+
     uint256 public lastHarvest;
 
     event Harvest(uint256 gained);
-    event HarvestConfigSet(bool onDeposit, uint256 minInterval);
 
     constructor(
         address _stResolv, // underlying
@@ -51,43 +51,54 @@ contract WstResolv is ERC4626, Ownable, Pausable, ReentrancyGuard {
         SafeERC20.forceApprove(resolv, _stResolv, type(uint256).max);
     }
 
-    /* Owner functions */
+    /*//////// OWNER FUNCTIONS  ////////*/
+
+    /// @notice Pause user entries (deposit/mint/harvest).
     function pause() external onlyOwner {
         _pause();
     }
 
+    /// @notice Unpause user entries (deposit/mint/harvest).
     function unpause() external onlyOwner {
         _unpause();
     }
 
-    function setHarvestConfig(bool onDeposit, uint256 minInterval) external onlyOwner {
-        harvestOnDeposit = onDeposit;
-        minHarvestInterval = minInterval;
-        emit HarvestConfigSet(onDeposit, minInterval);
-    }
-
+    /**
+     * @notice Rescue non-core tokens inadvertently sent to this contract.
+     * @dev    Cannot rescue the underlying (stRESOLV) or the vault’s own share token.
+     * @param token  ERC20 token address to rescue.
+     * @param to     Recipient address.
+     * @param amount Amount to transfer.
+     */
     function rescueERC20(address token, address to, uint256 amount) external onlyOwner {
         require(token != address(asset()), "cannot rescue asset");
         require(token != address(this), "cannot rescue shares");
         IERC20(token).safeTransfer(to, amount);
     }
 
-    /* harvest logic */
+    /*//////// HARVEST LOGIC ////////*/
 
-    function harvest() external nonReentrant returns (uint256 gained) {
+    /**
+     * @notice Claim RESOLV rewards and stake them back into stRESOLV.
+     * @dev    Permissionless, callers should consider gas economics.
+     *         Paused modifier
+     * @return gained Amount of stRESOLV added to the vault’s balance by this harvest.
+     */
+    function harvest() external whenNotPaused nonReentrant returns (uint256 gained) {
         return _executeHarvest();
     }
 
-    function _harvest() internal {
-        if (!harvestOnDeposit) return;
-        _executeHarvest();
-    }
-
+    /**
+     * @dev Internal implementation:
+     *      - Claims RESOLV to this contract.
+     *      - Stakes full RESOLV balance back into stRESOLV, minting stRESOLV to this contract.
+     *      - Emits `Harvest(gained)` with the net stRESOLV increase.
+     *
+     * @return gained Amount of stRESOLV added to the vault’s balance by this harvest.
+     */
     function _executeHarvest() internal returns (uint256 gained) {
-        if (block.timestamp < lastHarvest + minHarvestInterval) return 0;
-
         address vault = address(this);
-        uint256 beforeBal = IERC20(asset()).balanceOf(address(this));
+        uint256 beforeBal = IERC20(asset()).balanceOf(vault);
 
         // 1) claim resolv
         stResolv.claim(vault, vault);
@@ -104,8 +115,13 @@ contract WstResolv is ERC4626, Ownable, Pausable, ReentrancyGuard {
         if (gained != 0) emit Harvest(gained);
     }
 
-    /* overrides */
+    /*//////// OVERRIDES /////////
 
+    /**
+    * @inheritdoc ERC4626
+     * @dev Paused modifier prevents new deposits when paused
+     *      Reentrancy guard
+     */
     function deposit(uint256 assets, address receiver)
         public
         override
@@ -113,10 +129,14 @@ contract WstResolv is ERC4626, Ownable, Pausable, ReentrancyGuard {
         nonReentrant
         returns (uint256 shares)
     {
-        _harvest();
         shares = super.deposit(assets, receiver);
     }
 
+    /**
+     * @inheritdoc ERC4626
+     * @dev Paused modifier prevents new mints when paused
+     *      Reentrancy guard
+     */
     function mint(uint256 shares, address receiver)
         public
         override
@@ -124,29 +144,6 @@ contract WstResolv is ERC4626, Ownable, Pausable, ReentrancyGuard {
         nonReentrant
         returns (uint256 assets)
     {
-        _harvest();
         assets = super.mint(shares, receiver);
-    }
-
-    function withdraw(uint256 assets, address receiver, address owner_)
-        public
-        override
-        whenNotPaused
-        nonReentrant
-        returns (uint256 shares)
-    {
-        // No harvest here.
-        shares = super.withdraw(assets, receiver, owner_);
-    }
-
-    function redeem(uint256 shares, address receiver, address owner_)
-        public
-        override
-        whenNotPaused
-        nonReentrant
-        returns (uint256 assets)
-    {
-        // No harvest here.
-        assets = super.redeem(shares, receiver, owner_);
     }
 }

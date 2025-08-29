@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import "../src/WstResolv.sol";
+import "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Test, console} from "forge-std/Test.sol";
 
@@ -50,26 +51,6 @@ contract WstResolvTest is Test {
         assertEq(vault.owner(), owner);
         assertEq(address(vault.asset()), ST_RESOLV);
         assertEq(address(vault.resolv()), RESOLV);
-        assertFalse(vault.harvestOnDeposit());
-        console.log(vault.minHarvestInterval());
-        assertEq(vault.minHarvestInterval(), 1 hours);
-    }
-
-    function testDepositWithoutHarvest() public {
-        vm.prank(owner);
-        vault.setHarvestConfig(false, 1 hours);
-        uint256 depositAmount = 100e18;
-
-        vm.startPrank(user1);
-        stResolv.approve(address(vault), depositAmount);
-        console.log(stResolv.allowance(user1, address(vault)));
-        uint256 shares = vault.deposit(depositAmount, user1);
-        vm.stopPrank();
-
-        assertGt(shares, 0);
-        assertEq(vault.balanceOf(user1), shares);
-        vm.prank(owner);
-        vault.setHarvestConfig(true, 1 hours);
     }
 
     function testDeposit() public {
@@ -124,6 +105,8 @@ contract WstResolvTest is Test {
         vault.deposit(depositAmount, user1);
         vm.stopPrank();
 
+        uint256 preBalance = stResolv.balanceOf(address(vault));
+
         // Skip time to allow harvest
         vm.warp(block.timestamp + 2 hours);
 
@@ -132,32 +115,11 @@ contract WstResolvTest is Test {
 
         // Should have updated lastHarvest
         assertEq(vault.lastHarvest(), block.timestamp);
+        assertEq(resolv.balanceOf(address(vault)), 0);
+        assertEq(stResolv.balanceOf(address(vault)), preBalance + gained);
 
         // If there were rewards, gained should be > 0
         console.log("Gained from harvest:", gained);
-    }
-
-    function testHarvestOnDeposit() public {
-        // First deposit to establish baseline
-        vm.startPrank(user1);
-        stResolv.approve(address(vault), 100e18);
-        vault.deposit(100e18, user1);
-        vm.stopPrank();
-
-        // Skip time
-        vm.warp(block.timestamp + 2 hours);
-
-        // Second deposit should trigger harvest
-        vm.startPrank(user2);
-        stResolv.approve(address(vault), 50e18);
-
-        uint256 totalAssetsBefore = vault.totalAssets();
-        vault.deposit(50e18, user2);
-        uint256 totalAssetsAfter = vault.totalAssets();
-
-        // Total assets should include the new deposit
-        assertGe(totalAssetsAfter, totalAssetsBefore + 50e18);
-        vm.stopPrank();
     }
 
     function testPauseUnpause() public {
@@ -185,19 +147,9 @@ contract WstResolvTest is Test {
         vm.stopPrank();
     }
 
-    function testHarvestConfig() public {
-        vm.startPrank(owner);
-
-        vault.setHarvestConfig(false, 24 hours);
-
-        assertFalse(vault.harvestOnDeposit());
-        assertEq(vault.minHarvestInterval(), 24 hours);
-        vm.stopPrank();
-    }
-
     function testRescueERC20() public {
         // Deploy a dummy ERC20
-        MockERC20 dummyToken = new MockERC20();
+        ERC20Mock dummyToken = new ERC20Mock();
         dummyToken.mint(address(vault), 1000e18);
 
         vm.prank(owner);
@@ -220,24 +172,6 @@ contract WstResolvTest is Test {
         vm.stopPrank();
     }
 
-    function testMinHarvestInterval() public {
-        // Deposit
-        vm.startPrank(user1);
-        stResolv.approve(address(vault), 100e18);
-        vault.deposit(100e18, user1);
-        vm.stopPrank();
-
-        // Try to harvest immediately - should return 0
-        uint256 gained1 = vault.harvest();
-        assertEq(gained1, 0);
-
-        // Wait for interval and try again
-        vm.warp(block.timestamp + 2 hours);
-        uint256 gained2 = vault.harvest();
-        // This might be 0 if no rewards accumulated
-        console.log("Gained after waiting:", gained2);
-    }
-
     function testFuzz_DepositWithdraw(uint256 depositAmount) public {
         // Bound the fuzz input
         depositAmount = bound(depositAmount, 1e18, 500e18);
@@ -251,14 +185,5 @@ contract WstResolvTest is Test {
         // Should get back approximately the same amount (minus any fees)
         assertApproxEqRel(withdrawn, depositAmount, 0.01e18); // 1% tolerance
         vm.stopPrank();
-    }
-}
-
-// Mock ERC20 for testing rescue function
-contract MockERC20 is ERC20 {
-    constructor() ERC20("Mock", "MOCK") {}
-
-    function mint(address to, uint256 amount) external {
-        _mint(to, amount);
     }
 }
